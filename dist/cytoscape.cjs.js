@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2016-2019, The Cytoscape Consortium.
+ * Copyright (c) 2016-2020, The Cytoscape Consortium.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the “Software”), to deal in
@@ -707,10 +707,13 @@ var requestAnimationFrame = function requestAnimationFrame(fn) {
 };
 var performanceNow = pnow;
 
-var DEFAULT_SEED = 5381;
+var DEFAULT_HASH_SEED = 9261;
+var K = 65599; // 37 also works pretty well
+
+var DEFAULT_HASH_SEED_ALT = 5381;
 var hashIterableInts = function hashIterableInts(iterator) {
-  var seed = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : DEFAULT_SEED;
-  // djb2/string-hash
+  var seed = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : DEFAULT_HASH_SEED;
+  // sdbm/string-hash
   var hash = seed;
   var entry;
 
@@ -721,15 +724,29 @@ var hashIterableInts = function hashIterableInts(iterator) {
       break;
     }
 
-    hash = (hash << 5) + hash + entry.value | 0;
+    hash = hash * K + entry.value | 0;
   }
 
   return hash;
 };
 var hashInt = function hashInt(num) {
-  var seed = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : DEFAULT_SEED;
+  var seed = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : DEFAULT_HASH_SEED;
+  // sdbm/string-hash
+  return seed * K + num | 0;
+};
+var hashIntAlt = function hashIntAlt(num) {
+  var seed = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : DEFAULT_HASH_SEED_ALT;
   // djb2/string-hash
   return (seed << 5) + seed + num | 0;
+};
+var combineHashes = function combineHashes(hash1, hash2) {
+  return hash1 * 0x200000 + hash2;
+};
+var combineHashesArray = function combineHashesArray(hashes) {
+  return hashes[0] * 0x200000 + hashes[1];
+};
+var hashArrays = function hashArrays(hashes1, hashes2) {
+  return [hashInt(hashes1[0], hashes2[0]), hashIntAlt(hashes1[1], hashes2[1])];
 };
 var hashIntsArray = function hashIntsArray(ints, seed) {
   var entry = {
@@ -2125,6 +2142,8 @@ var elesfn$6 = {
   // Computes the minimum cut of an undirected graph
   // Returns the correct answer with high probability
   kargerStein: function kargerStein() {
+    var _this = this;
+
     var _this$byGroup = this.byGroup(),
         nodes = _this$byGroup.nodes,
         edges = _this$byGroup.edges;
@@ -2212,10 +2231,30 @@ var elesfn$6 = {
       } else {
         partition2.merge(node);
       }
-    }
+    } // construct components corresponding to each disjoint subset of nodes
 
+
+    var constructComponent = function constructComponent(subset) {
+      var component = _this.spawn();
+
+      subset.forEach(function (node) {
+        component.merge(node);
+        node.connectedEdges().forEach(function (edge) {
+          // ensure edge is within calling collection and edge is not in cut
+          if (_this.contains(edge) && !cut.contains(edge)) {
+            component.merge(edge);
+          }
+        });
+      });
+      return component;
+    };
+
+    var components = [constructComponent(partition1), constructComponent(partition2)];
     var ret = {
       cut: cut,
+      components: components,
+      // n.b. partitions are included to be compatible with the old api spec
+      // (could be removed in a future major version)
       partition1: partition1,
       partition2: partition2
     };
@@ -5548,8 +5587,196 @@ var elesfn$b = {
   }
 };
 
+var hopcroftTarjanBiconnected = function hopcroftTarjanBiconnected() {
+  var eles = this;
+  var nodes = {};
+  var id = 0;
+  var edgeCount = 0;
+  var components = [];
+  var stack = [];
+  var visitedEdges = {};
+
+  var buildComponent = function buildComponent(x, y) {
+    var i = stack.length - 1;
+    var cutset = [];
+    var component = eles.spawn();
+
+    while (stack[i].x != x || stack[i].y != y) {
+      cutset.push(stack.pop().edge);
+      i--;
+    }
+
+    cutset.push(stack.pop().edge);
+    cutset.forEach(function (edge) {
+      var connectedNodes = edge.connectedNodes().intersection(eles);
+      component.merge(edge);
+      connectedNodes.forEach(function (node) {
+        var nodeId = node.id();
+        var connectedEdges = node.connectedEdges().intersection(eles);
+        component.merge(node);
+
+        if (!nodes[nodeId].cutVertex) {
+          component.merge(connectedEdges);
+        } else {
+          component.merge(connectedEdges.filter(function (edge) {
+            return edge.isLoop();
+          }));
+        }
+      });
+    });
+    components.push(component);
+  };
+
+  var biconnectedSearch = function biconnectedSearch(root, currentNode, parent) {
+    if (root === parent) edgeCount += 1;
+    nodes[currentNode] = {
+      id: id,
+      low: id++,
+      cutVertex: false
+    };
+    var edges = eles.getElementById(currentNode).connectedEdges().intersection(eles);
+
+    if (edges.size() === 0) {
+      components.push(eles.spawn(eles.getElementById(currentNode)));
+    } else {
+      var sourceId, targetId, otherNodeId, edgeId;
+      edges.forEach(function (edge) {
+        sourceId = edge.source().id();
+        targetId = edge.target().id();
+        otherNodeId = sourceId === currentNode ? targetId : sourceId;
+
+        if (otherNodeId !== parent) {
+          edgeId = edge.id();
+
+          if (!visitedEdges[edgeId]) {
+            visitedEdges[edgeId] = true;
+            stack.push({
+              x: currentNode,
+              y: otherNodeId,
+              edge: edge
+            });
+          }
+
+          if (!(otherNodeId in nodes)) {
+            biconnectedSearch(root, otherNodeId, currentNode);
+            nodes[currentNode].low = Math.min(nodes[currentNode].low, nodes[otherNodeId].low);
+
+            if (nodes[currentNode].id <= nodes[otherNodeId].low) {
+              nodes[currentNode].cutVertex = true;
+              buildComponent(currentNode, otherNodeId);
+            }
+          } else {
+            nodes[currentNode].low = Math.min(nodes[currentNode].low, nodes[otherNodeId].id);
+          }
+        }
+      });
+    }
+  };
+
+  eles.forEach(function (ele) {
+    if (ele.isNode()) {
+      var nodeId = ele.id();
+
+      if (!(nodeId in nodes)) {
+        edgeCount = 0;
+        biconnectedSearch(nodeId, nodeId);
+        nodes[nodeId].cutVertex = edgeCount > 1;
+      }
+    }
+  });
+  var cutVertices = Object.keys(nodes).filter(function (id) {
+    return nodes[id].cutVertex;
+  }).map(function (id) {
+    return eles.getElementById(id);
+  });
+  return {
+    cut: eles.spawn(cutVertices),
+    components: components
+  };
+};
+
+var hopcroftTarjanBiconnected$1 = {
+  hopcroftTarjanBiconnected: hopcroftTarjanBiconnected,
+  htbc: hopcroftTarjanBiconnected,
+  htb: hopcroftTarjanBiconnected,
+  hopcroftTarjanBiconnectedComponents: hopcroftTarjanBiconnected
+};
+
+var tarjanStronglyConnected = function tarjanStronglyConnected() {
+  var eles = this;
+  var nodes = {};
+  var index = 0;
+  var components = [];
+  var stack = [];
+  var cut = eles.spawn(eles);
+
+  var stronglyConnectedSearch = function stronglyConnectedSearch(sourceNodeId) {
+    stack.push(sourceNodeId);
+    nodes[sourceNodeId] = {
+      index: index,
+      low: index++,
+      explored: false
+    };
+    var connectedEdges = eles.getElementById(sourceNodeId).connectedEdges().intersection(eles);
+    connectedEdges.forEach(function (edge) {
+      var targetNodeId = edge.target().id();
+
+      if (targetNodeId !== sourceNodeId) {
+        if (!(targetNodeId in nodes)) {
+          stronglyConnectedSearch(targetNodeId);
+        }
+
+        if (!nodes[targetNodeId].explored) {
+          nodes[sourceNodeId].low = Math.min(nodes[sourceNodeId].low, nodes[targetNodeId].low);
+        }
+      }
+    });
+
+    if (nodes[sourceNodeId].index === nodes[sourceNodeId].low) {
+      var componentNodes = eles.spawn();
+
+      for (;;) {
+        var nodeId = stack.pop();
+        componentNodes.merge(eles.getElementById(nodeId));
+        nodes[nodeId].low = nodes[sourceNodeId].index;
+        nodes[nodeId].explored = true;
+
+        if (nodeId === sourceNodeId) {
+          break;
+        }
+      }
+
+      var componentEdges = componentNodes.edgesWith(componentNodes);
+      var component = componentNodes.merge(componentEdges);
+      components.push(component);
+      cut = cut.difference(component);
+    }
+  };
+
+  eles.forEach(function (ele) {
+    if (ele.isNode()) {
+      var nodeId = ele.id();
+
+      if (!(nodeId in nodes)) {
+        stronglyConnectedSearch(nodeId);
+      }
+    }
+  });
+  return {
+    cut: cut,
+    components: components
+  };
+};
+
+var tarjanStronglyConnected$1 = {
+  tarjanStronglyConnected: tarjanStronglyConnected,
+  tsc: tarjanStronglyConnected,
+  tscc: tarjanStronglyConnected,
+  tarjanStronglyConnectedComponents: tarjanStronglyConnected
+};
+
 var elesfn$c = {};
-[elesfn, elesfn$1, elesfn$2, elesfn$3, elesfn$4, elesfn$5, elesfn$6, elesfn$7, elesfn$8, elesfn$9, elesfn$a, markovClustering$1, kClustering, hierarchicalClustering$1, affinityPropagation$1, elesfn$b].forEach(function (props) {
+[elesfn, elesfn$1, elesfn$2, elesfn$3, elesfn$4, elesfn$5, elesfn$6, elesfn$7, elesfn$8, elesfn$9, elesfn$a, markovClustering$1, kClustering, hierarchicalClustering$1, affinityPropagation$1, elesfn$b, hopcroftTarjanBiconnected$1, tarjanStronglyConnected$1].forEach(function (props) {
   extend(elesfn$c, props);
 });
 
@@ -6236,6 +6463,8 @@ var define = {
           if (vp.panned) {
             properties.pan = vp.pan;
           }
+        } else {
+          properties.zoom = null; // an inavalid zoom (e.g. no delta) gets automatically destroyed
         }
       }
 
@@ -9534,7 +9763,12 @@ var cachedBoundingBoxImpl = function cachedBoundingBoxImpl(ele, opts) {
   var currPosKey = getBoundingBoxPosKey(ele);
   var isPosKeySame = _p.bbCachePosKey === currPosKey;
   var useCache = opts.useCache && isPosKeySame;
-  var needRecalc = !useCache || _p.bbCache == null;
+
+  var isDirty = function isDirty(ele) {
+    return ele._private.bbCache == null;
+  };
+
+  var needRecalc = !useCache || isDirty(ele) || isEdge && isDirty(ele.source()) || isDirty(ele.target());
 
   if (needRecalc) {
     if (!isPosKeySame) {
@@ -11064,6 +11298,42 @@ var elesfn$p = {
 };
 elesfn$p.each = elesfn$p.forEach;
 
+var defineSymbolIterator = function defineSymbolIterator() {
+  var typeofUndef =  "undefined" ;
+  var isIteratorSupported = (typeof Symbol === "undefined" ? "undefined" : _typeof(Symbol)) != typeofUndef && _typeof(Symbol.iterator) != typeofUndef; // eslint-disable-line no-undef
+
+  if (isIteratorSupported) {
+    elesfn$p[Symbol.iterator] = function () {
+      var _this = this;
+
+      // eslint-disable-line no-undef
+      var entry = {
+        value: undefined,
+        done: false
+      };
+      var i = 0;
+      var length = this.length;
+      return _defineProperty({
+        next: function next() {
+          if (i < length) {
+            entry.value = _this[i++];
+          } else {
+            entry.value = undefined;
+            entry.done = true;
+          }
+
+          return entry;
+        }
+      }, Symbol.iterator, function () {
+        // eslint-disable-line no-undef
+        return this;
+      });
+    };
+  }
+};
+
+defineSymbolIterator();
+
 var getLayoutDimensionOptions = defaults({
   nodeDimensionsIncludeLabels: false
 });
@@ -12488,9 +12758,10 @@ elesfn$u.json = function (obj) {
         }
       } else {
         // parent is immutable via data()
+        var newParentValSpecd = 'parent' in obj.data;
         var parent = obj.data.parent;
 
-        if ((parent != null || _data2.parent != null) && parent != _data2.parent) {
+        if (newParentValSpecd && (parent != null || _data2.parent != null) && parent != _data2.parent) {
           if (parent === undefined) {
             // can't set undefined imperatively, so use null
             parent = null;
@@ -13456,6 +13727,10 @@ var easings = {
 
 function getEasedValue(type, start, end, percent, easingFn) {
   if (percent === 1) {
+    return end;
+  }
+
+  if (start === end) {
     return end;
   }
 
@@ -14528,16 +14803,27 @@ styfn.updateStyleHints = function (ele) {
 
   for (var i = 0; i < propGrKeys.length; i++) {
     var grKey = propGrKeys[i];
-    _p.styleKeys[grKey] = 0;
+    _p.styleKeys[grKey] = [DEFAULT_HASH_SEED, DEFAULT_HASH_SEED_ALT];
   }
 
+  var updateGrKey1 = function updateGrKey1(val, grKey) {
+    return _p.styleKeys[grKey][0] = hashInt(val, _p.styleKeys[grKey][0]);
+  };
+
+  var updateGrKey2 = function updateGrKey2(val, grKey) {
+    return _p.styleKeys[grKey][1] = hashIntAlt(val, _p.styleKeys[grKey][1]);
+  };
+
   var updateGrKey = function updateGrKey(val, grKey) {
-    return _p.styleKeys[grKey] = hashInt(val, _p.styleKeys[grKey]);
+    updateGrKey1(val, grKey);
+    updateGrKey2(val, grKey);
   };
 
   var updateGrKeyWStr = function updateGrKeyWStr(strVal, grKey) {
     for (var j = 0; j < strVal.length; j++) {
-      updateGrKey(strVal.charCodeAt(j), grKey);
+      var ch = strVal.charCodeAt(j);
+      updateGrKey1(ch, grKey);
+      updateGrKey2(ch, grKey);
     }
   }; // - hashing works on 32 bit ints b/c we use bitwise ops
   // - small numbers get cut off (e.g. 0.123 is seen as 0 by the hashing function)
@@ -14600,26 +14886,31 @@ styfn.updateStyleHints = function (ele) {
   //
 
 
-  var hash = 0;
+  var hash = [DEFAULT_HASH_SEED, DEFAULT_HASH_SEED_ALT];
 
   for (var _i3 = 0; _i3 < propGrKeys.length; _i3++) {
     var _grKey2 = propGrKeys[_i3];
     var grHash = _p.styleKeys[_grKey2];
-    hash = hashInt(grHash, hash);
+    hash[0] = hashInt(grHash[0], hash[0]);
+    hash[1] = hashIntAlt(grHash[1], hash[1]);
   }
 
-  _p.styleKey = hash; // label dims
+  _p.styleKey = combineHashes(hash[0], hash[1]); // label dims
   //
 
-  var labelDimsKey = _p.labelDimsKey = _p.styleKeys.labelDimensions;
-  _p.labelKey = propHash(ele, ['label'], labelDimsKey);
-  _p.labelStyleKey = hashInt(_p.styleKeys.commonLabel, _p.labelKey);
+  var sk = _p.styleKeys;
+  _p.labelDimsKey = combineHashesArray(sk.labelDimensions);
+  var labelKeys = propHash(ele, ['label'], sk.labelDimensions);
+  _p.labelKey = combineHashesArray(labelKeys);
+  _p.labelStyleKey = combineHashesArray(hashArrays(sk.commonLabel, labelKeys));
 
   if (!isNode) {
-    _p.sourceLabelKey = propHash(ele, ['source-label'], labelDimsKey);
-    _p.sourceLabelStyleKey = hashInt(_p.styleKeys.commonLabel, _p.sourceLabelKey);
-    _p.targetLabelKey = propHash(ele, ['target-label'], labelDimsKey);
-    _p.targetLabelStyleKey = hashInt(_p.styleKeys.commonLabel, _p.targetLabelKey);
+    var sourceLabelKeys = propHash(ele, ['source-label'], sk.labelDimensions);
+    _p.sourceLabelKey = combineHashesArray(sourceLabelKeys);
+    _p.sourceLabelStyleKey = combineHashesArray(hashArrays(sk.commonLabel, sourceLabelKeys));
+    var targetLabelKeys = propHash(ele, ['target-label'], sk.labelDimensions);
+    _p.targetLabelKey = combineHashesArray(targetLabelKeys);
+    _p.targetLabelStyleKey = combineHashesArray(hashArrays(sk.commonLabel, targetLabelKeys));
   } // node
   //
 
@@ -14631,8 +14922,9 @@ styfn.updateStyleHints = function (ele) {
         backgroundImage = _p$styleKeys.backgroundImage,
         compound = _p$styleKeys.compound,
         pie = _p$styleKeys.pie;
-    _p.nodeKey = hashIntsArray([nodeBorder, backgroundImage, compound, pie], nodeBody);
-    _p.hasPie = pie != 0;
+    var nodeKeys = [nodeBorder, backgroundImage, compound, pie].reduce(hashArrays, nodeBody);
+    _p.nodeKey = combineHashesArray(nodeKeys);
+    _p.hasPie = pie[0] !== DEFAULT_HASH_SEED && pie[1] !== DEFAULT_HASH_SEED_ALT;
   }
 
   return oldStyleKey !== _p.styleKey;
@@ -15442,7 +15734,7 @@ styfn$3.getPropsList = function (propsObj) {
 };
 
 styfn$3.getNonDefaultPropertiesHash = function (ele, propNames, seed) {
-  var hash = seed;
+  var hash = seed.slice();
   var name, val, strVal, chVal;
   var i, j;
 
@@ -15453,13 +15745,15 @@ styfn$3.getNonDefaultPropertiesHash = function (ele, propNames, seed) {
     if (val == null) {
       continue;
     } else if (val.pfValue != null) {
-      hash = hashInt(chVal, hash);
+      hash[0] = hashInt(chVal, hash[0]);
+      hash[1] = hashIntAlt(chVal, hash[1]);
     } else {
       strVal = val.strValue;
 
       for (j = 0; j < strVal.length; j++) {
         chVal = strVal.charCodeAt(j);
-        hash = hashInt(chVal, hash);
+        hash[0] = hashInt(chVal, hash[0]);
+        hash[1] = hashIntAlt(chVal, hash[1]);
       }
     }
   }
@@ -15755,6 +16049,11 @@ var styfn$6 = {};
       number: true
     },
     // allows negative
+    bidirectionalSizeMaybePercent: {
+      number: true,
+      allowPercent: true
+    },
+    // allows negative
     bidirectionalSizes: {
       number: true,
       multiple: true
@@ -15859,7 +16158,7 @@ var styfn$6 = {};
       enums: ['include', 'exclude']
     },
     arrowShape: {
-      enums: ['tee', 'triangle', 'triangle-tee', 'triangle-cross', 'triangle-backcurve', 'vee', 'square', 'circle', 'diamond', 'chevron', 'none']
+      enums: ['tee', 'triangle', 'triangle-tee', 'circle-triangle', 'triangle-cross', 'triangle-backcurve', 'vee', 'square', 'circle', 'diamond', 'chevron', 'none']
     },
     arrowFill: {
       enums: ['filled', 'hollow']
@@ -16440,7 +16739,7 @@ var styfn$6 = {};
     triggersBounds: diff.any
   }, {
     name: 'taxi-turn',
-    type: t.sizeMaybePercent,
+    type: t.bidirectionalSizeMaybePercent,
     triggersBounds: diff.any
   }, {
     name: 'taxi-turn-min-distance',
@@ -17666,9 +17965,6 @@ var corefn$8 = {
 
         this.emit('pan viewport');
         break;
-
-      default:
-        break;
       // invalid
     }
 
@@ -17715,9 +18011,6 @@ var corefn$8 = {
         }
 
         this.emit('pan viewport');
-        break;
-
-      default:
         break;
       // invalid
     }
@@ -19142,7 +19435,7 @@ var defaults$b = {
     return node.degree();
   },
   levelWidth: function levelWidth(nodes) {
-    // the letiation of concentric values in each level
+    // the variation of concentric values in each level
     return nodes.maxDegree() / 4;
   },
   animate: false,
@@ -21150,6 +21443,23 @@ BRp.registerArrowShapes = function () {
       renderer.arrowShapeImpl(this.name)(context, triPts, teePts);
     }
   });
+  defineArrowShape('circle-triangle', {
+    radius: 0.15,
+    pointsTr: [0, -0.15, 0.15, -0.45, -0.15, -0.45, 0, -0.15],
+    collide: function collide(x, y, size, angle, translation, edgeWidth, padding) {
+      var t = translation;
+      var circleInside = Math.pow(t.x - x, 2) + Math.pow(t.y - y, 2) <= Math.pow((size + 2 * padding) * this.radius, 2);
+      var triPts = pointsToArr(transformPoints(this.points, size + 2 * padding, angle, translation));
+      return pointInsidePolygonPoints(x, y, triPts) || circleInside;
+    },
+    draw: function draw(context, size, angle, translation, edgeWidth) {
+      var triPts = transformPoints(this.pointsTr, size, angle, translation);
+      renderer.arrowShapeImpl(this.name)(context, triPts, translation.x, translation.y, this.radius * size);
+    },
+    spacing: function spacing(edge) {
+      return renderer.getArrowWidth(edge.pstyle('width').pfValue, edge.pstyle('arrow-scale').value) * this.radius;
+    }
+  });
   defineArrowShape('triangle-cross', {
     points: [0, 0, 0.15, -0.3, -0.15, -0.3, 0, 0],
     baseCrossLinePts: [-0.15, -0.4, // first half of the rectangle
@@ -21959,9 +22269,9 @@ BRp$3.findTaxiPoints = function (edge, pairInfo) {
   var rawTaxiDir = taxiDir; // unprocessed value
 
   var taxiTurn = edge.pstyle('taxi-turn');
-  var taxiTurnPfVal = taxiTurn.pfValue;
-  var minD = edge.pstyle('taxi-turn-min-distance').pfValue;
   var turnIsPercent = taxiTurn.units === '%';
+  var taxiTurnPfVal = turnIsPercent && taxiTurn.pfValue < 0 ? 1 + taxiTurn.pfValue : taxiTurn.pfValue;
+  var minD = edge.pstyle('taxi-turn-min-distance').pfValue;
   var dw = dIncludesNodeBody ? (srcW + tgtW) / 2 : 0;
   var dh = dIncludesNodeBody ? (srcH + tgtH) / 2 : 0;
   var pdx = posPts.x2 - posPts.x1;
@@ -22009,7 +22319,7 @@ BRp$3.findTaxiPoints = function (edge, pairInfo) {
   };
 
   var isTooCloseSrc = getIsTooClose(d);
-  var isTooCloseTgt = getIsTooClose(l - d);
+  var isTooCloseTgt = getIsTooClose(l - Math.abs(d));
   var isTooClose = isTooCloseSrc || isTooCloseTgt;
 
   if (isTooClose && !forcedDir) {
@@ -22063,14 +22373,14 @@ BRp$3.findTaxiPoints = function (edge, pairInfo) {
   } else {
     // ideal routing
     if (isVert) {
-      var _y4 = posPts.y1 + d + (dIncludesNodeBody ? srcH / 2 * sgnL : 0);
+      var _y4 = (d < 0 ? posPts.y2 : posPts.y1) + d + (dIncludesNodeBody ? srcH / 2 * sgnL : 0);
 
       var _x4 = posPts.x1,
           _x5 = posPts.x2;
       rs.segpts = [_x4, _y4, _x5, _y4];
     } else {
       // horizontal
-      var _x6 = posPts.x1 + d + (dIncludesNodeBody ? srcW / 2 * sgnL : 0);
+      var _x6 = (d < 0 ? posPts.x2 : posPts.x1) + d + (dIncludesNodeBody ? srcW / 2 * sgnL : 0);
 
       var _y5 = posPts.y1,
           _y6 = posPts.y2;
@@ -22681,29 +22991,47 @@ BRp$4.findEndpoints = function (edge) {
       var lh = trs.labelHeight;
       var lx = trs.labelX;
       var ly = trs.labelY;
+      var lw2 = lw / 2;
+      var lh2 = lh / 2;
       var va = target.pstyle('text-valign').value;
 
       if (va === 'top') {
-        ly -= lh / 2;
+        ly -= lh2;
       } else if (va === 'bottom') {
-        ly += lh / 2;
+        ly += lh2;
       }
 
       var ha = target.pstyle('text-halign').value;
 
       if (ha === 'left') {
-        lx -= lw / 2;
+        lx -= lw2;
       } else if (ha === 'right') {
-        lx += lw / 2;
+        lx += lw2;
       }
 
-      var labelIntersect = r.nodeShapes['rectangle'].intersectLine(lx, ly, lw, lh, p1_i[0], p1_i[1], 0);
-      var refPt = srcPos;
-      var intSqdist = sqdist(refPt, array2point(intersect));
-      var labIntSqdist = sqdist(refPt, array2point(labelIntersect));
+      var labelIntersect = polygonIntersectLine(p1_i[0], p1_i[1], [lx - lw2, ly - lh2, lx + lw2, ly - lh2, lx + lw2, ly + lh2, lx - lw2, ly + lh2], tgtPos.x, tgtPos.y);
 
-      if (labIntSqdist < intSqdist) {
-        intersect = labelIntersect;
+      if (labelIntersect.length > 0) {
+        var refPt = srcPos;
+        var intSqdist = sqdist(refPt, array2point(intersect));
+        var labIntSqdist = sqdist(refPt, array2point(labelIntersect));
+        var minSqDist = intSqdist;
+
+        if (labIntSqdist < intSqdist) {
+          intersect = labelIntersect;
+          minSqDist = labIntSqdist;
+        }
+
+        if (labelIntersect.length > 2) {
+          var labInt2SqDist = sqdist(refPt, {
+            x: labelIntersect[2],
+            y: labelIntersect[3]
+          });
+
+          if (labInt2SqDist < minSqDist) {
+            intersect = [labelIntersect[2], labelIntersect[3]];
+          }
+        }
       }
     }
   }
@@ -22736,32 +23064,53 @@ BRp$4.findEndpoints = function (edge) {
       var _lh = srs.labelHeight;
       var _lx = srs.labelX;
       var _ly = srs.labelY;
+
+      var _lw2 = _lw / 2;
+
+      var _lh2 = _lh / 2;
+
       var _va = source.pstyle('text-valign').value;
 
       if (_va === 'top') {
-        _ly -= _lh / 2;
+        _ly -= _lh2;
       } else if (_va === 'bottom') {
-        _ly += _lh / 2;
+        _ly += _lh2;
       }
 
       var _ha = source.pstyle('text-halign').value;
 
       if (_ha === 'left') {
-        _lx -= _lw / 2;
+        _lx -= _lw2;
       } else if (_ha === 'right') {
-        _lx += _lw / 2;
+        _lx += _lw2;
       }
 
-      var _labelIntersect = r.nodeShapes['rectangle'].intersectLine(_lx, _ly, _lw, _lh, p2_i[0], p2_i[1], 0);
+      var _labelIntersect = polygonIntersectLine(p2_i[0], p2_i[1], [_lx - _lw2, _ly - _lh2, _lx + _lw2, _ly - _lh2, _lx + _lw2, _ly + _lh2, _lx - _lw2, _ly + _lh2], srcPos.x, srcPos.y);
 
-      var _refPt = tgtPos;
+      if (_labelIntersect.length > 0) {
+        var _refPt = tgtPos;
 
-      var _intSqdist = sqdist(_refPt, array2point(intersect));
+        var _intSqdist = sqdist(_refPt, array2point(intersect));
 
-      var _labIntSqdist = sqdist(_refPt, array2point(_labelIntersect));
+        var _labIntSqdist = sqdist(_refPt, array2point(_labelIntersect));
 
-      if (_labIntSqdist < _intSqdist) {
-        intersect = _labelIntersect;
+        var _minSqDist = _intSqdist;
+
+        if (_labIntSqdist < _intSqdist) {
+          intersect = [_labelIntersect[0], _labelIntersect[1]];
+          _minSqDist = _labIntSqdist;
+        }
+
+        if (_labelIntersect.length > 2) {
+          var _labInt2SqDist = sqdist(_refPt, {
+            x: _labelIntersect[2],
+            y: _labelIntersect[3]
+          });
+
+          if (_labInt2SqDist < _minSqDist) {
+            intersect = [_labelIntersect[2], _labelIntersect[3]];
+          }
+        }
       }
     }
   }
@@ -23392,14 +23741,10 @@ BRp$6.calculateLabelDimensions = function (ele, text) {
   ds.visibility = 'hidden';
   ds.pointerEvents = 'none';
   ds.padding = '0';
-  ds.lineHeight = '1';
+  ds.lineHeight = '1'; // - newlines must be taken into account for text-wrap:wrap
+  // - since spaces are not collapsed, each space must be taken into account
 
-  if (ele.pstyle('text-wrap').value === 'wrap') {
-    ds.whiteSpace = 'pre'; // so newlines are taken into account
-  } else {
-    ds.whiteSpace = 'normal';
-  } // put label content in div
-
+  ds.whiteSpace = 'pre'; // put label content in div
 
   div.textContent = text;
   return cache[cacheKey] = {
@@ -23518,8 +23863,8 @@ BRp$8.registerCalculationListeners = function () {
       }
 
       if (fns) {
-        for (var i = 0; i < fns.length; i++) {
-          var fn = fns[i];
+        for (var _i = 0; _i < fns.length; _i++) {
+          var fn = fns[_i];
           fn(willDraw, elesToUpdate);
         }
       }
@@ -23542,6 +23887,10 @@ BRp$8.onUpdateEleCalcs = function (fn) {
 };
 
 BRp$8.recalculateRenderedStyle = function (eles, useCache) {
+  var isCleanConnected = function isCleanConnected(ele) {
+    return ele._private.rstyle.cleanConnected;
+  };
+
   var edges = [];
   var nodes = []; // the renderer can't be used for calcs when destroyed, e.g. ele.boundingBox()
 
@@ -23557,7 +23906,13 @@ BRp$8.recalculateRenderedStyle = function (eles, useCache) {
   for (var i = 0; i < eles.length; i++) {
     var ele = eles[i];
     var _p = ele._private;
-    var rstyle = _p.rstyle; // only update if dirty and in graph
+    var rstyle = _p.rstyle; // an edge may be implicitly dirty b/c of one of its connected nodes
+    // (and a request for recalc may come in between frames)
+
+    if (ele.isEdge() && (!isCleanConnected(ele.source()) || !isCleanConnected(ele.target()))) {
+      rstyle.clean = false;
+    } // only update if dirty and in graph
+
 
     if (useCache && rstyle.clean || ele.removed()) {
       continue;
@@ -23579,35 +23934,37 @@ BRp$8.recalculateRenderedStyle = function (eles, useCache) {
   } // update node data from projections
 
 
-  for (var i = 0; i < nodes.length; i++) {
-    var ele = nodes[i];
-    var _p = ele._private;
-    var rstyle = _p.rstyle;
-    var pos = ele.position();
-    this.recalculateNodeLabelProjection(ele);
-    rstyle.nodeX = pos.x;
-    rstyle.nodeY = pos.y;
-    rstyle.nodeW = ele.pstyle('width').pfValue;
-    rstyle.nodeH = ele.pstyle('height').pfValue;
+  for (var _i2 = 0; _i2 < nodes.length; _i2++) {
+    var _ele = nodes[_i2];
+    var _p2 = _ele._private;
+    var _rstyle = _p2.rstyle;
+
+    var pos = _ele.position();
+
+    this.recalculateNodeLabelProjection(_ele);
+    _rstyle.nodeX = pos.x;
+    _rstyle.nodeY = pos.y;
+    _rstyle.nodeW = _ele.pstyle('width').pfValue;
+    _rstyle.nodeH = _ele.pstyle('height').pfValue;
   }
 
   this.recalculateEdgeProjections(edges); // update edge data from projections
 
-  for (var i = 0; i < edges.length; i++) {
-    var ele = edges[i];
-    var _p = ele._private;
-    var rstyle = _p.rstyle;
-    var rs = _p.rscratch; // update rstyle positions
+  for (var _i3 = 0; _i3 < edges.length; _i3++) {
+    var _ele2 = edges[_i3];
+    var _p3 = _ele2._private;
+    var _rstyle2 = _p3.rstyle;
+    var rs = _p3.rscratch; // update rstyle positions
 
-    rstyle.srcX = rs.arrowStartX;
-    rstyle.srcY = rs.arrowStartY;
-    rstyle.tgtX = rs.arrowEndX;
-    rstyle.tgtY = rs.arrowEndY;
-    rstyle.midX = rs.midX;
-    rstyle.midY = rs.midY;
-    rstyle.labelAngle = rs.labelAngle;
-    rstyle.sourceLabelAngle = rs.sourceLabelAngle;
-    rstyle.targetLabelAngle = rs.targetLabelAngle;
+    _rstyle2.srcX = rs.arrowStartX;
+    _rstyle2.srcY = rs.arrowStartY;
+    _rstyle2.tgtX = rs.arrowEndX;
+    _rstyle2.tgtY = rs.arrowEndY;
+    _rstyle2.midX = rs.midX;
+    _rstyle2.midY = rs.midY;
+    _rstyle2.labelAngle = rs.labelAngle;
+    _rstyle2.sourceLabelAngle = rs.sourceLabelAngle;
+    _rstyle2.targetLabelAngle = rs.targetLabelAngle;
   }
 };
 
@@ -24722,8 +25079,10 @@ BRp$c.load = function () {
 
 
     var cy = r.cy;
+    var zoom = cy.zoom();
+    var pan = cy.pan();
     var pos = r.projectIntoViewport(e.clientX, e.clientY);
-    var rpos = [pos[0] * cy.zoom() + cy.pan().x, pos[1] * cy.zoom() + cy.pan().y];
+    var rpos = [pos[0] * zoom + pan.x, pos[1] * zoom + pan.y];
 
     if (r.hoverData.draggingEles || r.hoverData.dragging || r.hoverData.cxtStarted || inBoxSelection()) {
       // if pan dragging or cxt dragging, wheel movements make no zoom
@@ -24758,8 +25117,14 @@ BRp$c.load = function () {
         diff *= 33;
       }
 
+      var newZoom = cy.zoom() * Math.pow(10, diff);
+
+      if (e.type === 'gesturechange') {
+        newZoom = r.gestureStartZoom * e.scale;
+      }
+
       cy.zoom({
-        level: cy.zoom() * Math.pow(10, diff),
+        level: newZoom,
         renderedPosition: {
           x: rpos[0],
           y: rpos[1]
@@ -24782,6 +25147,21 @@ BRp$c.load = function () {
     r.scrollingPageTimeout = setTimeout(function () {
       r.scrollingPage = false;
     }, 250);
+  }, true); // desktop safari pinch to zoom start
+
+  r.registerBinding(r.container, 'gesturestart', function gestureStartHandler(e) {
+    r.gestureStartZoom = r.cy.zoom();
+
+    if (!r.hasTouchStarted) {
+      // don't affect touch devices like iphone
+      e.preventDefault();
+    }
+  }, true);
+  r.registerBinding(r.container, 'gesturechange', function (e) {
+    if (!r.hasTouchStarted) {
+      // don't affect touch devices like iphone
+      wheelHandler(e);
+    }
   }, true); // Functions to help with handling mouseout/mouseover on the Cytoscape container
   // Handle mouseout on Cytoscape container
 
@@ -24827,6 +25207,8 @@ BRp$c.load = function () {
 
   var touchstartHandler;
   r.registerBinding(r.container, 'touchstart', touchstartHandler = function touchstartHandler(e) {
+    r.hasTouchStarted = true;
+
     if (!eventInContainer(e)) {
       return;
     }
@@ -28023,6 +28405,26 @@ function triangleTee(context, trianglePoints, teePoints) {
   }
 }
 
+function circleTriangle(context, trianglePoints, rx, ry, r) {
+  if (context.beginPath) {
+    context.beginPath();
+  }
+
+  context.arc(rx, ry, r, 0, Math.PI * 2, false);
+  var triPts = trianglePoints;
+  var firstTrPt = triPts[0];
+  context.moveTo(firstTrPt.x, firstTrPt.y);
+
+  for (var i = 0; i < triPts.length; i++) {
+    var pt = triPts[i];
+    context.lineTo(pt.x, pt.y);
+  }
+
+  if (context.closePath) {
+    context.closePath();
+  }
+}
+
 function circle(context, rx, ry, r) {
   context.arc(rx, ry, r, 0, Math.PI * 2, false);
 }
@@ -28032,6 +28434,7 @@ CRp.arrowShapeImpl = function (name) {
     'polygon': polygon,
     'triangle-backcurve': triangleBackcurve,
     'triangle-tee': triangleTee,
+    'circle-triangle': circleTriangle,
     'triangle-cross': triangleTee,
     'circle': circle
   }))[name];
@@ -28169,10 +28572,17 @@ CRp$1.drawCachedElement = function (context, ele, pxRatio, extent, lvl, requestH
   }
 
   if (!extent || boundingBoxesIntersect(bb, extent)) {
-    r.drawCachedElementPortion(context, ele, eleTxrCache, pxRatio, lvl, reason, getZeroRotation, getOpacity);
-    r.drawCachedElementPortion(context, ele, lblTxrCache, pxRatio, lvl, reason, getLabelRotation, getTextOpacity);
+    var isEdge = ele.isEdge();
 
-    if (ele.isEdge()) {
+    var badLine = ele.element()._private.rscratch.badLine;
+
+    r.drawCachedElementPortion(context, ele, eleTxrCache, pxRatio, lvl, reason, getZeroRotation, getOpacity);
+
+    if (!isEdge || !badLine) {
+      r.drawCachedElementPortion(context, ele, lblTxrCache, pxRatio, lvl, reason, getLabelRotation, getTextOpacity);
+    }
+
+    if (isEdge && !badLine) {
       r.drawCachedElementPortion(context, ele, slbTxrCache, pxRatio, lvl, reason, getSourceLabelRotation, getTextOpacity);
       r.drawCachedElementPortion(context, ele, tlbTxrCache, pxRatio, lvl, reason, getTargetLabelRotation, getTextOpacity);
     }
@@ -28513,11 +28923,11 @@ CRp$2.drawArrowShape = function (edge, context, fill, edgeWidth, shape, x, y, an
     }
   }
 
-  if (context.beginPath) {
-    context.beginPath();
-  }
-
   if (!pathCacheHit) {
+    if (context.beginPath) {
+      context.beginPath();
+    }
+
     if (usePaths) {
       // store in the path cache with values easily manipulated later
       shapeImpl.draw(context, 1, 0, {
@@ -28527,10 +28937,10 @@ CRp$2.drawArrowShape = function (edge, context, fill, edgeWidth, shape, x, y, an
     } else {
       shapeImpl.draw(context, size, angle, translation, edgeWidth);
     }
-  }
 
-  if (context.closePath) {
-    context.closePath();
+    if (context.closePath) {
+      context.closePath();
+    }
   }
 
   context = canvasContext;
@@ -28765,12 +29175,14 @@ CRp$4.drawElementText = function (context, ele, shiftToOriginWithBb, force, pref
     context.textAlign = justification;
     context.textBaseline = 'bottom';
   } else {
+    var badLine = ele.element()._private.rscratch.badLine;
+
     var _label = ele.pstyle('label');
 
     var srcLabel = ele.pstyle('source-label');
     var tgtLabel = ele.pstyle('target-label');
 
-    if ((!_label || !_label.value) && (!srcLabel || !srcLabel.value) && (!tgtLabel || !tgtLabel.value)) {
+    if (badLine || (!_label || !_label.value) && (!srcLabel || !srcLabel.value) && (!tgtLabel || !tgtLabel.value)) {
       return;
     }
 
@@ -28962,9 +29374,6 @@ CRp$4.drawText = function (context, ele, prefix) {
 
         case 'center':
           bgX -= textW / 2;
-          break;
-
-        case 'right':
           break;
       }
 
@@ -31181,7 +31590,7 @@ sheetfn.appendToStyle = function (style) {
   return style;
 };
 
-var version = "3.12.0";
+var version = "3.15.0";
 
 var cytoscape = function cytoscape(options) {
   // if no options specified, use default

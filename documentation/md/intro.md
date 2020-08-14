@@ -54,6 +54,7 @@
   * [BioGRID](http://thebiogrid.org/)
   * [BlueSail CRM](https://bluesailcrm.com/)
   * [Classcraft](https://www.classcraft.com/)
+  * CJFP & Associates: [Sherlock](https://sherlock.scalingo.io/)
   * [Cray Inc.](http://www.cray.com)
   * [CyberSift](https://cybersift.io)
   * [CyNetShare](http://cynetshare.ucsd.edu/)
@@ -65,6 +66,7 @@
   * [Facebook](https://www.facebook.com) : [Metro](https://facebook.github.io/metro/) visualiser
   * [Fediverse](https://www.fediverse.space/)
   * [Ganister](http://www.ganister.eu/)
+  * [GLB301 Simulation](https://cytoscape-demo.netlify.com/)
   * [Google](https://google.com) : [TensorFlow](https://www.tensorflow.org) : SyntaxNet : DRAGNN visualiser
   * [GCHQ](https://www.gchq.gov.uk/) : [Gaffer](https://gchq.github.io/gaffer-doc/)
   * [GeneMANIA](http://genemania.org)
@@ -80,6 +82,7 @@
   * [Machine2Learn](https://www.machine2learn.com) : [Deep Learning Model Generator](https://www.machine2learn.com/deep-learning-model-generator/)
   * [Max Plank Institute of Molecular Cell Physiology](https://www.mpimp-golm.mpg.de) : [CoNekT](http://conekt.mpimp-golm.mpg.de/pub/)
   * [Musicalized](http://en.musicalized.com/full)
+  * [Naver](https://www.naver.com/) : [Pinpoint](https://naver.github.io/pinpoint/)
   * [New Relic](https://newrelic.com/platform)
   * [NDEx](http://www.ndexbio.org/)
   * [NSA](https://www.nsa.gov/) : [WALKOFF](https://github.com/nsacyber/WALKOFF)
@@ -88,6 +91,7 @@
   * [Pathway Commons](http://www.pathwaycommons.org)
   * [py2cytoscape](https://github.com/idekerlab/py2cytoscape)
   * [Rezza](http://rezza.io)
+  * [Research Institute for Fragrance Materials](https://www.rifm.org) : [RIFM Database](https://rifmdatabase.rifm.org/rifmweb/)
   * [Sainsbury Laboratory](http://www.tsl.ac.uk/) : [PINet](http://pinet.tsl.ac.uk/)
   * Southwest Harbor Public Library, Maine : [Digital Archive](http://swhplibrary.net/archive/) : [AvantRelationships](https://github.com/gsoules/AvantRelationships)
   * [Sotera Defense Solutions, Inc.](http://www.soteradefense.com/) : [Graphene](http://sotera.github.io/graphene/)
@@ -137,10 +141,28 @@ The library was created at the [Donnelly Centre](http://thedonnellycentre.utoron
 
 ## Releases
 
+- 3.15
+ - [3.15.2](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.15.+is%3Aclosed)
+ - [3.15.1](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.15.1+is%3Aclosed)
+ - [3.15.0](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.15.0+is%3Aclosed)
+- 3.14
+ - [3.14.4](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.14.4+is%3Aclosed)
+ - [3.14.3](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.14.3+is%3Aclosed)
+ - [3.14.2](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.14.2+is%3Aclosed)
+ - [3.14.1](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.14.1+is%3Aclosed)
+ - [3.14.0](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.14.0+is%3Aclosed)
+- 3.13
+ - [3.13.3](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.13.3+is%3Aclosed)
+ - [3.13.2](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.13.2+is%3Aclosed)
+ - [3.13.1](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.13.1+is%3Aclosed)
+ - [3.13.0](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.13.0+is%3Aclosed)
 - 3.12
+ - [3.12.3](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.12.3+is%3Aclosed)
+ - [3.12.2](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.12.2+is%3Aclosed)
  - [3.12.1](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.12.1+is%3Aclosed)
  - [3.12.0](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.12.0+is%3Aclosed)
 - 3.11
+ - [3.11.2](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.11.2+is%3Aclosed)
  - [3.11.1](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.11.1+is%3Aclosed)
  - [3.11.0](https://github.com/cytoscape/cytoscape.js/issues?q=milestone%3A3.11.0+is%3Aclosed)
 - 3.10

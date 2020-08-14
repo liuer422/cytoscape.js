@@ -36,6 +36,7 @@ const styfn = {};
     positiveNumber: { number: true, unitless: true, min: 0, strictMin: true },
     size: { number: true, min: 0 },
     bidirectionalSize: { number: true }, // allows negative
+    bidirectionalSizeMaybePercent: { number: true, allowPercent: true }, // allows negative
     bidirectionalSizes: { number: true, multiple: true }, // allows negative
     sizeMaybePercent: { number: true, min: 0, allowPercent: true },
     axisDirection: { enums: ['horizontal', 'leftward', 'rightward', 'vertical', 'upward', 'downward', 'auto'] },
@@ -69,7 +70,7 @@ const styfn = {};
       'tag', 'round-tag', 'star', 'diamond', 'round-diamond', 'vee', 'rhomboid', 'polygon',
     ] },
     compoundIncludeLabels: { enums: [ 'include', 'exclude' ] },
-    arrowShape: { enums: [ 'tee', 'triangle', 'triangle-tee', 'triangle-cross', 'triangle-backcurve', 'vee', 'square', 'circle', 'diamond', 'chevron', 'none' ] },
+    arrowShape: { enums: [ 'tee', 'triangle', 'triangle-tee', 'circle-triangle', 'triangle-cross', 'triangle-backcurve', 'vee', 'square', 'circle', 'diamond', 'chevron', 'none' ] },
     arrowFill: { enums: [ 'filled', 'hollow' ] },
     display: { enums: [ 'element', 'none' ] },
     visibility: { enums: [ 'hidden', 'visible' ] },
@@ -155,6 +156,12 @@ const styfn = {};
     },
     any: function( val1, val2 ){
       return val1 != val2;
+    },
+    emptyNonEmpty: function( str1, str2 ){
+      const empty1 = is.emptyString(str1);
+      const empty2 = is.emptyString(str2);
+
+      return (empty1 && !empty2) || (!empty1 && empty2);
     }
   };
 
@@ -166,7 +173,7 @@ const styfn = {};
   let t = styfn.types;
 
   let mainLabel = [
-    { name: 'label', type: t.text, triggersBounds: diff.any },
+    { name: 'label', type: t.text, triggersBounds: diff.any, triggersZOrder: diff.emptyNonEmpty },
     { name: 'text-rotation', type: t.textRotation, triggersBounds: diff.any },
     { name: 'text-margin-x', type: t.bidirectionalSize, triggersBounds: diff.any },
     { name: 'text-margin-y', type: t.bidirectionalSize, triggersBounds: diff.any }
@@ -325,7 +332,7 @@ const styfn = {};
     { name: 'control-point-weights', type: t.numbers, triggersBounds: diff.any },
     { name: 'segment-distances', type: t.bidirectionalSizes, triggersBounds: diff.any },
     { name: 'segment-weights', type: t.numbers, triggersBounds: diff.any },
-    { name: 'taxi-turn', type: t.sizeMaybePercent, triggersBounds: diff.any },
+    { name: 'taxi-turn', type: t.bidirectionalSizeMaybePercent, triggersBounds: diff.any },
     { name: 'taxi-turn-min-distance', type: t.size, triggersBounds: diff.any },
     { name: 'taxi-direction', type: t.axisDirection, triggersBounds: diff.any },
     { name: 'edge-distances', type: t.edgeDistances, triggersBounds: diff.any },
